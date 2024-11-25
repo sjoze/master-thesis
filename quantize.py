@@ -1,5 +1,5 @@
 '''
-Transformation from Torch to ONNX to TensoRT with big help from https://zenn.dev/pinto0309/scraps/42587e1074fc53
+Transformation from Torch to ONNX to TensorRT with big help from https://zenn.dev/pinto0309/scraps/42587e1074fc53
 '''
 
 import os
