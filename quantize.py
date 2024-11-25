@@ -1,3 +1,7 @@
+'''
+Transformation from Torch to ONNX to TensoRT with big help from https://zenn.dev/pinto0309/scraps/42587e1074fc53
+'''
+
 import os
 import time
 import timm
