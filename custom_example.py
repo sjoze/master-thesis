@@ -46,7 +46,7 @@ class Imagenet1000(Dataset):
 model = torch.hub.load('pytorch/vision:v0.10.0', 'alexnet', pretrained=True)
 
 
-# Define a class with a "prune" method and a "name" and "amount" attribute.
+# Define a class with a "prune" method and a "name" and "amount" attribute
 class Random(Pruner):
     def __init__(self, amount, verbosity=0):
         super().__init__("Random Unstructured", amount)
@@ -64,4 +64,4 @@ class Random(Pruner):
 
 
 # Call benchmark_pq with defined model, pruner and dataset
-benchmark_pq(model=model, pruner=Random(amount=0.1), dataset=Imagenet1000(), mode="p", batchsize=64)
+benchmark_pq(model=model, pruner=Random(amount=0.1), dataset=Imagenet1000(), mode="p", batchsize=64, exp_file_name="custom experiment")

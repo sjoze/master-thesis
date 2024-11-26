@@ -56,6 +56,7 @@ class ImageWoof(Dataset):
         self.data_path = "data/imagewoof2/val"
         self.image_paths = []
         self.labels = []
+        self.outputs_to_keep = [155, 159, 162, 167, 193, 182, 207, 229, 258, 273]
         self.label_dict = dict(
               n02086240=0,
               n02087394=1,
@@ -87,9 +88,6 @@ class ImageWoof(Dataset):
     def __str__(self):
         return "ImageWoof"
 
-    def outputs_to_keep(self):
-        return [155, 159, 162, 167, 193, 182, 207, 229, 258, 273]
-
 
 @register
 class Imagenette(Dataset):
@@ -97,6 +95,7 @@ class Imagenette(Dataset):
     # 566 = French horn, 569 = garbage truck, 571 = gas pump, 574 = golf ball, 701 = parachute
     def __init__(self, split="val"):
         self.dataset = datasets.Imagenette(split=split, root="data", transform=imagenet_transform)
+        self.outputs_to_keep = [0, 217, 482, 491, 497, 566, 569, 571, 574, 701]
 
     def __len__(self):
         return len(self.dataset)
@@ -107,5 +106,3 @@ class Imagenette(Dataset):
     def __str__(self):
         return "ImageNette"
 
-    def outputs_to_keep(self):
-        return [0, 217, 482, 491, 497, 566, 569, 571, 574, 701]

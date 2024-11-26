@@ -2,27 +2,18 @@ import torch.nn.utils.prune as prune
 import torch.nn as nn
 import torch
 from models import AlexNet, ResNet, DenseNet, GoogLeNet, InceptionV3, MobileNetV2, ShuffleNetV2, SimpleNet, SqueezeNet
-from pq_datasets import Imagenette, Imagenet1000, ImageWoof
 from torch.utils.data import DataLoader
 import numpy as np
-from statistics import mean
-import time
-import tensorflow as tf
 from math import floor
-from helper import get_model_size, sparse_model, convert_to_sparse_weights
 from torchpruner.pruner import Pruner as TorchPruner
-from torchsummary import summary
 from torchpruner.attributions import (
     WeightNormAttributionMetric,
     RandomAttributionMetric,
     SensitivityAttributionMetric,
-    TaylorAttributionMetric,
-    APoZAttributionMetric,
-    ShapleyAttributionMetric,
-    find_best_module_for_attributions
+    TaylorAttributionMetric
 )
 
-
+# Returns all available pruners
 prunerdict = {}
 def register(cls):
     prunerdict[cls.__name__.lower()] = cls
@@ -54,17 +45,18 @@ class Random(Pruner):
         self.verbosity = verbosity
 
     def prune(self, model):
-
+        # Collect every module with a weight
         modules = [module for module in model.modules() if not isinstance(module, nn.Sequential) and hasattr(module, "weight")]
-
+        # Prune the modules
         for module in modules:
             prune.random_unstructured(module, name="weight", amount=self.amount)
+            # Apply pruning mask
             prune.remove(module, 'weight')
             if self.verbosity > 0:
                 print("Pruned " + module.__str__())
 
 
-# default: n = -inf, dim = 1
+# Default: n = -inf, dim = 1
 # Disconnect all connections to one input: 1 (or Channels for Convs)
 # Disconnect one neuron: 0 (or Neurons for Convs)
 @register
@@ -76,15 +68,10 @@ class LnStructured(Pruner):
         self.verbosity = verbosity
 
     def prune(self, model):
-
         modules = [module for module in model.modules() if not isinstance(module, nn.Sequential) and hasattr(module, "weight")]
-
         for module in modules:
-            #try:
             prune.ln_structured(module, name="weight", amount=self.amount, dim=self.dim, n=self.n)
             prune.remove(module, 'weight')
-            #except:
-            #    continue
             if self.verbosity > 0:
                 print("Pruned " + module.__str__())
 
@@ -96,9 +83,7 @@ class L1Unstructured(Pruner):
         self.verbosity = verbosity
 
     def prune(self, model):
-
         modules = [module for module in model.modules() if not isinstance(module, nn.Sequential) and hasattr(module, "weight")]
-
         for module in modules:
             prune.l1_unstructured(module, name="weight", amount=self.amount)
             prune.remove(module, 'weight')
@@ -113,9 +98,9 @@ class L1UnstructuredGlobal(Pruner):
         self.verbosity = verbosity
 
     def prune(self, model):
-        modules = [module for module in model.modules() if
-                   not isinstance(module, nn.Sequential) and hasattr(module, "weight")]
+        modules = [module for module in model.modules() if not isinstance(module, nn.Sequential) and hasattr(module, "weight")]
         parameters = []
+        # Global pruner needs list of Tuples
         for module in modules:
             parameters.append((module, "weight"))
 
@@ -130,6 +115,7 @@ class L1UnstructuredGlobal(Pruner):
 class RemovalPruner(Pruner):
     def __init__(self, amount, dataset, attribution, batch_size, criterion, device):
         super().__init__("Removal Pruner", amount)
+        # Available pruning citeria
         self.attribution_dict = {
             "random": RandomAttributionMetric, "weight": WeightNormAttributionMetric, "sensitivity": SensitivityAttributionMetric,
             "taylor": TaylorAttributionMetric }
@@ -139,6 +125,7 @@ class RemovalPruner(Pruner):
         self.device = device
         self.dataset = dataset
 
+    # Traverse the model and find adjacent modules. When removing weights, we need to know which other modules will be influenced
     def get_pruning_graph(self, model):
             already_added = []
             modules = [module for module in model.modules()]
@@ -167,24 +154,19 @@ class RemovalPruner(Pruner):
         attr = self.attribution_dict[self.attribution](model, data_generator, self.criterion, self.device)
         pruner = TorchPruner(model, input_size=(C, W, H), device=self.device)
 
-        for module, cascading_modules in pruning_graph[::-1]:		#[::-1]
+        # Cascading modules are all the modules influenced by the pruning of the current module
+        for module, cascading_modules in pruning_graph[::-1]:
             if len(cascading_modules) == 0:
                 continue
             if isinstance(module, torch.nn.modules.linear.Linear) or isinstance(module, torch.nn.modules.conv._ConvNd):
+                # Apply attribution
                 scores = attr.run(module)
                 scores_copy = np.copy(scores)
                 scores_copy.sort()
+                # Prune percentage of sorted weights according to pruning degree
                 threshold = scores_copy[floor(scores.size * self.amount)]
                 pruning_indices = np.argwhere(scores < threshold).flatten()
                 pruner.prune_model(module, pruning_indices, cascading_modules=cascading_modules)
 
     def __str__(self):
         return f"{self.attribution}"
-
-
-
-
-
-
-
-

@@ -1,67 +1,38 @@
-from configparser import ConfigParser
-import ast
-from models import get_modeldict
-from pq_datasets import get_datasetdict
-from pruners import get_prunerdict
-#import numpy as np
 import time
 from statistics import mean
 from torch.utils.data import DataLoader
-import tensorflow as tf
 import torch
 import csv
-from helper import get_model_size
+from helper import get_model_size, ConfigReader, calculate_accuracy
 from datetime import datetime
 from quantize import prepare, run_tensorrt
 from torch.profiler import profile, record_function, ProfilerActivity
 import os
-#from torchsummary import summary
 import itertools
+from pathlib import Path
 
 
 device = torch.device("cuda")
-#device = torch.device("cpu")
 print(f"########## CUDNN IS AVAILABLE: {torch.backends.cudnn.is_available()}")
 print("########## WORKING ON: " + torch.cuda.get_device_name())
 
-# Read config.ini file
-config_object = ConfigParser()
-config_object.read("config.ini")
+# Placeholder variables for CSV file and config reader
+f_csv = False
+csv_writer = False
+cfg = False
 
-# Get the sections
-pruning = config_object["PRUNING"]
-quantizing = config_object["QUANTIZING"]
-models = config_object["MODELS"]
-datasets = config_object["DATASETS"]
-pruners = config_object["PRUNERS"]
-parameters = config_object["PARAMETERS"]
-removal = config_object["REMOVAL_PRUNERS"]
-ln_dim = int(config_object['LN_PRUNING']['dim'])
-ln_n = int(config_object['LN_PRUNING']['n'])
-trt_path = config_object['TRT_FILEFOLDER']['path']
-degrees = ast.literal_eval(pruning["degrees"])
-batchsizes = ast.literal_eval(parameters["batchsizes"])
-iterations = int(config_object['PARAMETERS']['iterations'])
-
-# Filter out models, datasets, pruners and quantizers
-modeldict = get_modeldict()
-models_to_test = [m for m in models if models.getboolean(m)]
-
-datasetdict = get_datasetdict()
-datasets_to_test = [d for d in datasets if datasets.getboolean(d)]
-
-prunerdict = get_prunerdict()
-pruners_to_test = [p for p in pruners if pruners.getboolean(p)]
-removal_pruners_to_test = [p for p in removal if removal.getboolean(p)]
-
-quantizers_to_test = [q for q in quantizing if quantizing.getboolean(q)]
-
-# Create csv file for results
-timestamp = datetime.now().strftime("%m:%d:%Y_%H:%M:%S")
-csv_fields = ["Model", "Pruner", "Quantizer", "Dataset", "Amount", "Accuracy", "Inference Time (ms)", "Original Size", "Compressed Size", "Batch Size", "Prep Time (s)"]
-f_csv = open("exps/Experiment_" + timestamp + ".csv", "a")
-csv_writer = csv.writer(f_csv)
-csv_writer.writerow(csv_fields)
+# Create experiment folder and experiment CSV file
+def create_experiment_csv(exp_path, exp_file_name):
+	# Experiment named after start time if not customized otherwise
+	if exp_file_name == "":
+		exp_file_name = datetime.now().strftime("%m:%d:%Y_%H:%M:%S")
+	csv_fields = ["Model", "Pruner", "Quantizer", "Dataset", "Amount", "Accuracy", "Inference Time (ms)", "Original Size", "Compressed Size", "Batch Size", "Prep Time (s)"]
+	Path(exp_path).mkdir(parents=True, exist_ok=True)
+	global f_csv
+	f_csv = open(exp_path +  "/Experiment_" + exp_file_name + ".csv", "a")
+	global csv_writer
+	csv_writer = csv.writer(f_csv)
+	csv_writer.writerow(csv_fields)
 
 
 """
@@ -71,30 +42,25 @@ def run_model(model, dataset, batch_size):
 	data_generator = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=8)
 	accs = []
 	inference_times = []
-	outputs_to_keep = dataset.outputs_to_keep()
 	for x, y in data_generator:
 		x, y = x.to(device), y
+		# Track GPU usage on inference
 		with profile(activities=[
 			ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof:
 			with record_function("model_inference"):
 				output = model(x)
 		for event in prof.key_averages():
 			if event.key == "model_inference":
-				inference_times.append(event.cuda_time)
-
+				inference_times.append(event.cuda_time/1000)	# Lists time as ms but returns it as µs
 		output = output.cpu().detach()
-		outputs_to_keep = dataset.outputs_to_keep()
-		if len(outputs_to_keep) > 0:
-			output = torch.from_numpy(tf.transpose(tf.gather(tf.transpose(output), outputs_to_keep)).numpy())
-		output = torch.argmax(output, dim=1)
-		acc = (output.round() == y).float().mean()
-		acc = float(acc * 100)
-		accs.append(float(acc))
+		acc = calculate_accuracy(dataset, output, y, "p")
+		accs.append(acc)
 	print("########## Accuracy: " + "%.2f%%" % (mean(accs)))
-	print(f"########## Model elapsed: {mean(inference_times)} ms")
+	print(f"########## Per Batch on AVG: {mean(inference_times)} ms")
 	return {"accuracy": "%.2f" % (mean(accs)), "inf_time": mean(inference_times), "model_size": get_model_size(model), "batch_size": batch_size}
 
 
+# Process some batches to warm up GPU
 def warmup_model(model, iterations, batch_size, C, H, W):
 	for i in range(iterations):
 		dummy_data = torch.rand(batch_size, C, H, W).to(device)
@@ -104,9 +70,12 @@ def warmup_model(model, iterations, batch_size, C, H, W):
 """
 MODEL COMPRESSION AND BENCHMARKING
 """
-def benchmark_pq(model, dataset, batchsize, mode, pruner="-", quantizer="-", trt_path="./data/trt_caches"):
-
+def benchmark_pq(model, dataset, batchsize, mode, pruner="-", quantizer="-", trt_path="./data/trt_caches", exp_path="./data/experiments", exp_file_name=""):
+	# If this method is called on its own (i.e. with custom settings and not our benchmark config), create experiment file with specified file name
+	if not f_csv:
+		create_experiment_csv(exp_path, exp_file_name)
 	model = model.eval().to(device)
+	# If no pruner specified
 	amount = pruner_name = "-"
 	if "p" in mode:
 		amount = pruner.get_amount()
@@ -118,22 +87,31 @@ def benchmark_pq(model, dataset, batchsize, mode, pruner="-", quantizer="-", trt
 
 	print("########## MODEL: % s with PRUNER: % s and QUANTIZER: % s and AMOUNT: % s on DATASET: %s with BATCHSIZE: %s" % (model_name, pruner_name, quantizer, amount, dataset_name, batchsize))
 	start_time = time.perf_counter()
+	# If pruning degree inside of (0,1], prune. Otherwise run base model
 	if "p" in mode and amount > 0 and amount <= 1:
 		pruner.prune(model)
 	if "q" in mode:
-		os.makedirs(trt_path, exist_ok=True)
+		# Create filefolder for temp data of TensorRT
+		Path(trt_path).mkdir(parents=True, exist_ok=True)
+		# Remove any temp files from previous runs as they can interfere with current run
 		filelist = [ f for f in os.listdir(trt_path) ]
 		for f in filelist:
 			os.remove(os.path.join(trt_path, f))
+		# Run ONNX preparation for TensorRT quantization
 		prepare(model=(model.to(memory_format=torch.channels_last)), batch_size=batchsize, trt_path=trt_path, dataset=dataset)
 	else:
+		# If no quantization specified, warm up the model (in case of quantization we would warm up with TensorRT)
 		warmup_model(model=model, iterations=10, batch_size=batchsize, C=C, W=W, H=H)
 		print("########## Finished Warmup")
+	# Measure preparation (pruning / quantization) time
 	prep_time = time.perf_counter() - start_time
 	if "q" in mode:
+		# Run inference with TensorRT
 		results = run_tensorrt(inference_type=quantizer, batch_size=batchsize, dataset=dataset, trt_path=trt_path)
 	else:
+		# Run inference with Torch
 		results = run_model(model, dataset, batchsize)
+	# Save results
 	csv_writer.writerow([model_name, pruner_name, quantizer, dataset_name, str(amount), results["accuracy"], results["inf_time"], orig_model_size, results["model_size"], results["batch_size"], prep_time])
 	f_csv.flush()
 
@@ -142,15 +120,20 @@ def benchmark_pq(model, dataset, batchsize, mode, pruner="-", quantizer="-", trt
 ITERATION OF PRUNING BENCHMARKS WITH CONFIG
 """
 def test_pruning():
-	for b, m, p, d, a in itertools.product(batchsizes, models_to_test, pruners_to_test + removal_pruners_to_test, datasets_to_test, degrees):
-		model = modeldict[m]().model
-		dataset = datasetdict[d]()
+	# Iterate over every permutation of configurations
+	for b, m, p, d, a in itertools.product(cfg.batchsizes, cfg.models_to_test, cfg.pruners_to_test + cfg.removal_pruners_to_test, cfg.datasets_to_test, cfg.degrees):
+		# Get models
+		model = cfg.modeldict[m]().model
+		# Get datasets
+		dataset = cfg.datasetdict[d]()
+		# Structured Ln pruning needs further parameters
 		if p.startswith("lnstructured"):
-			pruner = prunerdict["lnstructured"](n=ln_n, dim=ln_dim, amount=a)
-		elif p in removal_pruners_to_test:
-			pruner = prunerdict["removalpruner"](amount=a, dataset=dataset, attribution=p, batch_size=b, criterion=torch.nn.CrossEntropyLoss(), device=device)
+			pruner = cfg.prunerdict["lnstructured"](n=cfg.ln_n, dim=cfg.ln_dim, amount=a)
+		# Removal pruners initialized differently to zero fill pruners
+		elif p in cfg.removal_pruners_to_test:
+			pruner = cfg.prunerdict["removalpruner"](amount=a, dataset=dataset, attribution=p, batch_size=b, criterion=torch.nn.CrossEntropyLoss(), device=device)
 		else:
-			pruner = prunerdict[p](amount=a)
+			pruner = cfg.prunerdict[p](amount=a)
 		try:
 			benchmark_pq(model=model, pruner=pruner, dataset=dataset, batchsize=b, mode="p")
 		except:
@@ -161,37 +144,45 @@ def test_pruning():
 ITERATION OF QUANTIZATION BENCHMARKS WITH CONFIG
 """
 def test_quant():
-	for b, m, q, d in itertools.product(batchsizes, models_to_test, quantizers_to_test, datasets_to_test):
-		model = modeldict[m]().model
-		dataset = datasetdict[d]()
-		#try:
-		benchmark_pq(model=model, quantizer=q, dataset=dataset, batchsize=b, trt_path=trt_path, mode="q")
-		#except:
-		#	print("########## Couldn't quantize % s" % (m))
+	for b, m, q, d in itertools.product(cfg.batchsizes, cfg.models_to_test, cfg.quantizers_to_test, cfg.datasets_to_test):
+		model = cfg.modeldict[m]().model
+		dataset = cfg.datasetdict[d]()
+		try:
+			benchmark_pq(model=model, quantizer=q, dataset=dataset, batchsize=b, trt_path=trt_path, mode="q")
+		except:
+			print("########## Couldn't quantize % s" % (m))
 
 
 """
 ITERATION OF PRUNING + QUANTIZATION BENCHMARKS WITH CONFIG
 """
 def test_pruning_and_quant():
-	for b, m, p, q, d, a in itertools.product(batchsizes, models_to_test, pruners_to_test + removal_pruners_to_test, quantizers_to_test, datasets_to_test, degrees):
-		model = modeldict[m]().model
-		dataset = datasetdict[d]()
+	for b, m, p, q, d, a in itertools.product(cfg.batchsizes, cfg.models_to_test, cfg.pruners_to_test + cfg.removal_pruners_to_test, cfg.quantizers_to_test, cfg.datasets_to_test, cfg.degrees):
+		model = cfg.modeldict[m]().model
+		dataset = cfg.datasetdict[d]()
 		if p.startswith("lnstructured"):
-			pruner = prunerdict["lnstructured"](n=ln_n, dim=ln_dim, amount=a)
-		elif p in removal_pruners_to_test:
-			pruner = prunerdict["removalpruner"](amount=a, dataset=dataset, attribution=p, batch_size=b, criterion=torch.nn.CrossEntropyLoss(), device=device)
+			pruner = prunerdict["lnstructured"](n=cfg.ln_n, dim=cfg.ln_dim, amount=a)
+		elif p in cfg.removal_pruners_to_test:
+			pruner = cfg.prunerdict["removalpruner"](amount=a, dataset=dataset, attribution=p, batch_size=b, criterion=torch.nn.CrossEntropyLoss(), device=device)
 		else:
-			pruner = prunerdict[p](amount=a)
+			pruner = cfg.prunerdict[p](amount=a)
 		try:
 			benchmark_pq(model=model, pruner=pruner, quantizer=q, dataset=dataset, batchsize=b, trt_path=trt_path, mode="pq")
 		except:
 			print("########## Couldn't compress % s" % (m))
 
 
-for _ in range(iterations):
-	if len(pruners_to_test + removal_pruners_to_test) > 0: test_pruning()
-	if len(quantizers_to_test) > 0: test_quant()
-	if len(pruners_to_test + removal_pruners_to_test) > 0 and len(quantizers_to_test) > 0: test_pruning_and_quant()
+if __name__ == '__main__':
+	for _ in range(iterations):
+		# Read config file
+		cfg = ConfigReader()
+		# Create CSV file
+		create_experiment_csv(cfg.exp_path)
+		# Prune if pruners specified
+		if len(cfg.pruners_to_test + cfg.removal_pruners_to_test) > 0: test_pruning()
+		# Quantize if quantizer specified
+		if len(cfg.quantizers_to_test) > 0: test_quant()
+		# Prune and quantize if both specified
+		if len(cfg.pruners_to_test + cfg.removal_pruners_to_test) > 0 and len(cfg.quantizers_to_test) > 0: test_pruning_and_quant()
 
-f_csv.close()
+	f_csv.close()

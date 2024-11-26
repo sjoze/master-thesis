@@ -1,24 +1,54 @@
 import torch
 import os
-from torchao.sparsity.training import (
-    SemiSparseLinear,
-    swap_linear_with_semi_sparse_linear,
-)
-import onnx
-import tensorrt as trt
-#import onnx_tensorrt.backend as backend
 from torch2trt import torch2trt
 from datetime import datetime
-import time
-
-
-timestamp = datetime.now().strftime("%m:%d:%Y_%H:%M:%S")
+from configparser import ConfigParser
+import ast
+from models import get_modeldict
+from pq_datasets import get_datasetdict
+from pruners import get_prunerdict
+import tensorflow as tf
 
 
 device = torch.device("cpu")
 if torch.cuda.is_available():
     device = torch.device("cuda")
 
+
+# Class for reading in config sections
+class ConfigReader():
+    def __init__(self):
+        config_object = ConfigParser()
+        config_object.read("config.ini")
+        self.pruning = config_object["PRUNING"]
+        self.quantizing = config_object["QUANTIZING"]
+        self.models = config_object["MODELS"]
+        self.datasets = config_object["DATASETS"]
+        self.pruners = config_object["PRUNERS"]
+        self.parameters = config_object["PARAMETERS"]
+        self.removal = config_object["REMOVAL_PRUNERS"]
+        self.ln_dim = int(config_object['LN_PRUNING']['dim'])
+        self.ln_n = int(config_object['LN_PRUNING']['n'])
+        self.trt_path = config_object['FILEFOLDERS']['trt_caches']
+        self.exp_path = config_object['FILEFOLDERS']['experiments']
+        self.degrees = ast.literal_eval(pruning["degrees"])
+        self.batchsizes = ast.literal_eval(parameters["batchsizes"])
+        self.iterations = int(config_object['PARAMETERS']['iterations'])
+
+        self.modeldict = get_modeldict()
+        self.models_to_test = [m for m in models if models.getboolean(m)]
+
+        self.datasetdict = get_datasetdict()
+        self.datasets_to_test = [d for d in datasets if datasets.getboolean(d)]
+
+        self.prunerdict = get_prunerdict()
+        self.pruners_to_test = [p for p in pruners if pruners.getboolean(p)]
+        self.removal_pruners_to_test = [p for p in removal if removal.getboolean(p)]
+
+        self.quantizers_to_test = [q for q in quantizing if quantizing.getboolean(q)]
+
+
+# Return size of Torch model in MB
 def get_model_size(model):
     name = datetime.now().strftime("%m:%d:%Y_%H:%M:%S")
     torch.save(model.state_dict(), name + ".pt")
@@ -27,18 +57,7 @@ def get_model_size(model):
     return size
 
 
-def sparse_model(model):
-
-    # Specify the fully-qualified-name of the nn.Linear modules you want to swap
-    sparse_config = {
-        "seq.0": SemiSparseLinear
-    }
-
-    # Swap nn.Linear with SemiSparseLinear, you can run your normal training loop after this step
-    swap_linear_with_semi_sparse_linear(model, sparse_config)
-    print(get_model_size(model))
-
-
+# For checking if zero fill pruner pruned accordingly
 def count_zero_weights(model):
     zeros = 0
     total = 0
@@ -51,6 +70,7 @@ def count_zero_weights(model):
     return [zeros, zeros/total]
 
 
+# Sparsify a model and print out new model size
 def convert_to_sparse_weights(model):
     for name, module in model.named_modules():
         if isinstance(module, torch.nn.Conv2d) or isinstance(module, torch.nn.Linear):
@@ -60,35 +80,14 @@ def convert_to_sparse_weights(model):
     return model
 
 
-def torch_to_onnx(model, dataloader):
-    #onnx_program = torch.onnx.dynamo_export(model, next(iter(dataloader))[0])
-    onnx_model = torch.onnx.export(model, next(iter(dataloader))[0], f="model.onnx")
-
-
-def torch_to_trt(model, dataloader):
-    torch_to_onnx(model, dataloader)
-    onnx_model = onnx.load("model.onnx")
-
-
-def torch_to_trt_direct(model, dataloader):
-    model_trt = torch2trt(model,  [next(iter(dataloader))[0][0].unsqueeze(0).to(device)])
-    return model_trt
-
-
-def get_engine_size(path):
-    engine_file_size = 0
-    files = [f for f in os.listdir(path) if '.engine' in f]
-    if len(files) > 0:
-        engine_file_size = os.path.getsize(path + "/" + files[0])/ (1024 * 1024)
-    return engine_file_size
-
-
-
-
-
-
-
-
-
-
+# Returns accuracy value from classification of specified classes
+def calculate_accuracy(dataset, output, y, mode):
+	# If dataset is on subset of data, only take those classes into account
+	if hasattr(dataset, 'outputs_to_keep'):
+		output = torch.from_numpy(tf.transpose(tf.gather(tf.transpose(output), dataset.outputs_to_keep)).numpy())
+    if "q" in mode:
+        output = torch.squeeze(output, dim=0)
+	output = torch.argmax(output, dim=1)
+	acc = (output.round() == y).float().mean()
+	return float(acc * 100)
 

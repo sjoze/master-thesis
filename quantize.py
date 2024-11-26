@@ -1,12 +1,5 @@
-'''
-Transformation from Torch to ONNX to TensorRT with big help from https://zenn.dev/pinto0309/scraps/42587e1074fc53
-'''
-
 import os
-import time
-import timm
 import torch
-import tensorflow as tf
 import tensorrt
 import onnx
 import numpy as np
@@ -18,16 +11,15 @@ from onnxruntime.quantization import (
     write_calibration_table,
     CalibrationMethod,
 )
-from argparse import ArgumentParser
-from pq_datasets import ImageWoof
 from torch.utils.data import DataLoader
 from statistics import mean
-from helper import get_model_size
+from helper import calculate_accuracy
 from torch.profiler import profile, record_function, ProfilerActivity
 
 
 N = 1000
 
+# Calibration Dataset for ONNX to prepare model for TensorRT
 class ONNXCalibrationDataset(CalibrationDataReader):
     def __init__(self, C, W, H, batch_size=128):
         super().__init__()
@@ -45,6 +37,8 @@ class ONNXCalibrationDataset(CalibrationDataReader):
         else:
             return None
 
+
+# Computing quantization parameters on a small set of training or evaluation data and export the resulting model and a calibration file
 def prepare(model, trt_path, dataset, batch_size=128):
     C, W, H = dataset.__getitem__(0)[0].shape
     cwd = os.getcwd()
@@ -63,6 +57,7 @@ def prepare(model, trt_path, dataset, batch_size=128):
     model = onnx.shape_inference.infer_shapes(model)
     onnx.save(model, "model_dynamic.onnx")
 
+    # Create calibration dataset with dummy data
     calibration_dataset = ONNXCalibrationDataset(batch_size=batch_size, C=C, W=W, H=H)
     calibrator = create_calibrator(
         model="model_dynamic.onnx",
@@ -75,10 +70,12 @@ def prepare(model, trt_path, dataset, batch_size=128):
 
     compute_data = calibrator.compute_data().data
     new_compute_data = {k: (float(v.range_value[0]), float(v.range_value[1])) for k, v in compute_data.items()}
+    # Export calibration results
     write_calibration_table(new_compute_data)
     os.chdir(cwd)
 
 
+# Execute TensorRT engine
 def run_tensorrt(dataset, trt_path, inference_type="int8", use_trt_cache=True, batch_size=128):
 
     C, W, H = dataset.__getitem__(0)[0].shape
@@ -89,6 +86,7 @@ def run_tensorrt(dataset, trt_path, inference_type="int8", use_trt_cache=True, b
 
     print(f'########## [TensorRT - {"FP16" if inference_type == "fp16" else "INT8" if inference_type == "int8" else "BASE"}] Model loading...')
     model = ort.InferenceSession(
+        # Define model to run
         path_or_bytes= trt_path + "/model_dynamic.onnx",
         sess_options=sess_options,
         providers=[
@@ -99,16 +97,19 @@ def run_tensorrt(dataset, trt_path, inference_type="int8", use_trt_cache=True, b
                     'trt_engine_cache_path': os.getcwd() +'/data/trt_caches',
                     } | \
                 {
+                    # Use INT8 if possible, fall back to FP16 otherwise
                     "trt_fp16_enable": True,
                     "trt_int8_enable": True,
                     "trt_int8_calibration_table_name": "calibration.flatbuffers",
                 } if inference_type == 'int8' else \
                 {
+                    # Use FP16
                     'trt_engine_cache_enable': use_trt_cache,
                     'trt_engine_cache_path': os.getcwd() +'/data/trt_caches',
                     "trt_fp16_enable": True,
                 } if inference_type == "fp16" else \
                 {
+                    # Run without any quantization
                     'trt_engine_cache_enable': use_trt_cache,
                     'trt_engine_cache_path': os.getcwd() +'/data/trt_caches',
                     "trt_int8_enable": False,
@@ -122,45 +123,34 @@ def run_tensorrt(dataset, trt_path, inference_type="int8", use_trt_cache=True, b
 
     print(f'########## [TensorRT - {"FP16" if inference_type == "fp16" else "INT8" if inference_type == "int8" else "BASE"}] Model loading Done!')
 
-    # Dummy inference
+    # Warumup with dummy inference
     print(f'########## [TensorRT - {"FP16" if inference_type == "fp16" else "INT8" if inference_type == "int8" else "BASE"}] Optimization and Warmup process...')
     for i in range(10):
         data = np.ones([batch_size, C, H, W], dtype=np.float32)
         _ = model.run(["output"], {"input": data})
     print(f'########## [TensorRT - {"FP16" if inference_type == "fp16" else "INT8" if inference_type == "int8" else "BASE"}] Optimization and Warmup Done!')
     print(f'########## [TensorRT - {"FP16" if inference_type == "fp16" else "INT8" if inference_type == "int8" else "BASE"}] Inference started...')
-
     accs = []
     inference_times = []
     for x, y in dataloader:
-        start_time = time.perf_counter()
         with profile(activities=[
             ProfilerActivity.CPU, ProfilerActivity.CUDA], record_shapes=True) as prof:
             with record_function("model_inference"):
                 output = model.run(["output"], {'input': x.numpy()})
         for event in prof.key_averages():
             if event.key == "model_inference":
-                #print(event)
-                #print(event.cuda_time)
-                inference_times.append(event.cuda_time)
-        #inference_time = inference_time + (time.perf_counter() - start_time)
-        outputs_to_keep = dataset.outputs_to_keep()
-        pred = torch.from_numpy(tf.transpose(tf.gather(tf.transpose(output), outputs_to_keep)).numpy())
-        pred = torch.squeeze(pred, dim=0)
-        pred = torch.argmax(pred, dim=1)
-        acc = (pred.round() == y).float().mean()
-        acc = float(acc * 100)
-        accs.append(float(acc))
+                inference_times.append(event.cuda_time/1000)
+        acc = calculate_accuracy(dataset, output, y, "q")
+        accs.append(acc)
 
     print(f'########## [TensorRT - {"FP16" if inference_type == "fp16" else "INT8"}] Inference DONE')
     print("########## Accuracy: " + str(mean(accs)))
-    print(f'########## [TensorRT - {"FP16" if inference_type == "fp16" else "INT8"}] elapsed: {mean(inference_times)} ms')
-    print('')
+    print(f'########## [TensorRT - {"FP16" if inference_type == "fp16" else "INT8"}] Batch Inference on AVG: {mean(inference_times)} ms')
 
+    # Calculate "model" size of the TensorRT engine
     engine_file_size = 0
     files = [f for f in os.listdir(trt_path) if '.engine' in f]
     if len(files) > 0:
         engine_file_size = os.path.getsize(os.path.join(trt_path, files[0]))/ (1024 * 1024)
 
     return {"accuracy": "%.2f" % (mean(accs)), "inf_time": mean(inference_times), "model_size": engine_file_size, "batch_size": batch_size}
-
