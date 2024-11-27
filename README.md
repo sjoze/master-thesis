@@ -24,3 +24,5 @@ Our recommended setup is as follows:
   <li>Run pq_bench.py.</li>
   <li>The results should be in data/experiments if not specified otherwise.</li>
 </ol> 
+
+Help for staring a custom run can be found in custom_example.py.
