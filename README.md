@@ -12,8 +12,11 @@ We find out that some pruning and quantization tools do not live up to their exp
 Our recommended setup is as follows:
 
 <ol>
-  <li>First item</li>
-  <li>Second item</li>
-  <li>Third item</li>
-  <li>Fourth item</li>
+  <li>Setup a conda environment.</li>
+  <li>Install CUDA, CUDNN and then TENSORRT according to [this guide](https://medium.com/kgxperience/how-to-install-tensorrt-a-comprehensive-guide-99557c0e9d6) and pay close attention to the required version matching of the ONNX runtime according to [their documentation](https://onnxruntime.ai/docs/execution-providers/TensorRT-ExecutionProvider.html). We used TensorRT 10.4.0, CUDA 12.2, ONNX 1.16.2 with ONNX Runtime GPU support 1.19.2.</li>
+  <li>Install the packages in the provided requirements file.</li>
+  <li>Download the datasets to a data/imagennette2 and data/imagewoof2 folder structure.</li>
+  <li>Modify the config file according to the desired experiments to run.</li>
+  <li>Run pq_bench.py.</li>
+  <li>The results should be in data/experiments if not specified otherwise.</li>
 </ol> 
