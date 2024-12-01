@@ -27,38 +27,54 @@ class ConfigReader():
         self.pruners = config_object["PRUNERS"]
         self.parameters = config_object["PARAMETERS"]
         self.removal = config_object["REMOVAL_PRUNERS"]
-        self.ln_dim = int(config_object['LN_PRUNING']['dim'])
-        self.ln_n = int(config_object['LN_PRUNING']['n'])
-        self.trt_path = config_object['FILEFOLDERS']['trt_caches']
-        self.exp_path = config_object['FILEFOLDERS']['experiments']
-        self.degrees = ast.literal_eval(pruning["degrees"])
-        self.batchsizes = ast.literal_eval(parameters["batchsizes"])
-        self.iterations = int(config_object['PARAMETERS']['iterations'])
+        self.ln_dim = int(config_object["LN_PRUNING"]["dim"])
+        self.ln_n = int(config_object["LN_PRUNING"]["n"])
+        self.trt_path = config_object["FILEFOLDERS"]["trt_caches"]
+        self.exp_path = config_object["FILEFOLDERS"]["experiments"]
+        self.degrees = ast.literal_eval(self.pruning["degrees"])
+        self.batchsizes = ast.literal_eval(self.parameters["batchsizes"])
+        self.iterations = int(config_object["PARAMETERS"]["iterations"])
 
         self.modeldict = get_modeldict()
-        self.models_to_test = [m for m in models if models.getboolean(m)]
+        self.models_to_test = [m for m in self.models if self.models.getboolean(m)]
 
         self.datasetdict = get_datasetdict()
-        self.datasets_to_test = [d for d in datasets if datasets.getboolean(d)]
+        self.datasets_to_test = [d for d in self.datasets if self.datasets.getboolean(d)]
 
         self.prunerdict = get_prunerdict()
-        self.pruners_to_test = [p for p in pruners if pruners.getboolean(p)]
-        self.removal_pruners_to_test = [p for p in removal if removal.getboolean(p)]
+        self.pruners_to_test = [p for p in self.pruners if self.pruners.getboolean(p)]
+        self.removal_pruners_to_test = [p for p in self.removal if self.removal.getboolean(p)]
 
-        self.quantizers_to_test = [q for q in quantizing if quantizing.getboolean(q)]
+        self.quantizers_to_test = [q for q in self.quantizing if self.quantizing.getboolean(q)]
 
 
-# Return size of Torch model in MB
 def get_model_size(model):
+	"""
+	Return size of Torch model in MB
+
+	Args:
+		model (Torch Model): 	Model to be measured
+
+	Returns:
+		String:					Size in MB as string
+	"""
     name = datetime.now().strftime("%m:%d:%Y_%H:%M:%S")
     torch.save(model.state_dict(), name + ".pt")
     size = "%.2f MB" %(os.path.getsize(name + ".pt")/1e6)
-    os.remove(name + '.pt')
+    os.remove(name + ".pt")
     return size
 
 
-# For checking if zero fill pruner pruned accordingly
 def count_zero_weights(model):
+	"""
+	Checks if zero fill pruner pruned accordingly
+
+	Args:
+		model (Torch Model): 	Model to be checked
+
+	Returns:
+		List:					Returns the total number of zero entries and the ratio in the model
+	"""
     zeros = 0
     total = 0
     for param in model.parameters():
@@ -70,8 +86,16 @@ def count_zero_weights(model):
     return [zeros, zeros/total]
 
 
-# Sparsify a model and print out new model size
 def convert_to_sparse_weights(model):
+	"""
+	Sparsifies a model and prints out new model size
+
+	Args:
+		model (Torch Model): 	Model to be converted
+
+	Returns:
+		Torch Model:			Sparsified model
+	"""
     for name, module in model.named_modules():
         if isinstance(module, torch.nn.Conv2d) or isinstance(module, torch.nn.Linear):
             module.weight = torch.nn.Parameter(module.weight.data.to_sparse())
@@ -80,14 +104,26 @@ def convert_to_sparse_weights(model):
     return model
 
 
-# Returns accuracy value from classification of specified classes
 def calculate_accuracy(dataset, output, y, mode):
-	# If dataset is on subset of data, only take those classes into account
-	if hasattr(dataset, 'outputs_to_keep'):
-		output = torch.from_numpy(tf.transpose(tf.gather(tf.transpose(output), dataset.outputs_to_keep)).numpy())
+	"""
+	Returns accuracy value from classification of specified classes
+
+	Args:
+		dataset (Torch Dataset): 	Dataset used in the testing process for calulcating predictions
+        output (NumPy Array):       Output of the testing process
+        y (Tensort):                Labels of the tested data
+        mode (String):              Indicator whether pruning or quantization has been used
+
+	Returns:
+		Float:			            Accuracy of output
+	"""
+    # If dataset is on subset of data, only take those classes into account
+    if hasattr(dataset, "outputs_to_keep"):
+        output = torch.from_numpy(tf.transpose(tf.gather(tf.transpose(output), dataset.outputs_to_keep)).numpy())
+    # Quantization output needs to be reshaped
     if "q" in mode:
         output = torch.squeeze(output, dim=0)
-	output = torch.argmax(output, dim=1)
-	acc = (output.round() == y).float().mean()
-	return float(acc * 100)
+    output = torch.argmax(output, dim=1)
+    acc = (output.round() == y).float().mean()
+    return float(acc * 100)
 

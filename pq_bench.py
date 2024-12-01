@@ -21,8 +21,15 @@ f_csv = False
 csv_writer = False
 cfg = False
 
-# Create experiment folder and experiment CSV file
-def create_experiment_csv(exp_path, exp_file_name):
+
+def create_experiment_csv(exp_path, exp_file_name=""):
+	"""
+	Create experiment folder and experiment CSV file
+
+	Args:
+		exp_path (String): 		Path to the experiment folder
+		exp_file_name (String): Name for the experiment CSV file
+	"""
 	# Experiment named after start time if not customized otherwise
 	if exp_file_name == "":
 		exp_file_name = datetime.now().strftime("%m:%d:%Y_%H:%M:%S")
@@ -39,6 +46,17 @@ def create_experiment_csv(exp_path, exp_file_name):
 MODEL EXECUTION
 """
 def run_model(model, dataset, batch_size):
+	"""
+	Executes the model test run
+
+	Args:
+		model (Torch Model): 		Model to be tested
+		dataset (Torch Dataset): 	Dataset to be tested on
+		batch_size (int):			Batch size
+
+	Returns:
+		Dict:						Dictionary with all results
+	"""
 	data_generator = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=8)
 	accs = []
 	inference_times = []
@@ -60,8 +78,16 @@ def run_model(model, dataset, batch_size):
 	return {"accuracy": "%.2f" % (mean(accs)), "inf_time": mean(inference_times), "model_size": get_model_size(model), "batch_size": batch_size}
 
 
-# Process some batches to warm up GPU
 def warmup_model(model, iterations, batch_size, C, H, W):
+	"""
+	Process some batches to warm up GPU
+
+	Args:
+		model (Torch Model): 		Model for warmup
+		iterations (int): 			Number of iterations for warmup
+		batch_size (int):			Batch size
+		C, W, H (int, int, int)		Dimensions of the data
+	"""
 	for i in range(iterations):
 		dummy_data = torch.rand(batch_size, C, H, W).to(device)
 		_ = model(dummy_data)
@@ -71,6 +97,19 @@ def warmup_model(model, iterations, batch_size, C, H, W):
 MODEL COMPRESSION AND BENCHMARKING
 """
 def benchmark_pq(model, dataset, batchsize, mode, pruner="-", quantizer="-", trt_path="./data/trt_caches", exp_path="./data/experiments", exp_file_name=""):
+	"""
+	Runs a benchmark (either pruning, quantization or both)
+
+	Args:
+		model (Torch Model): 		Model to be benchmarked
+		dataset (Torch Dataset): 	Dataset to be benchmarked on
+		batch_size (int):			Batch size
+		pruner (Pruner):			Pruner to be used, "-" if no in use
+		quantizer (String):			Quantizing mode to be used (INT8, FP16, BASE), "-" if no in use
+		trt_path (String):			Path to store the temp and engine files of TRT and ONNX
+		exp_path (String):			Path to the experiment folder
+		exp_file_name (String):		Name for the experiment CSV file
+	"""
 	# If this method is called on its own (i.e. with custom settings and not our benchmark config), create experiment file with specified file name
 	if not f_csv:
 		create_experiment_csv(exp_path, exp_file_name)
@@ -120,6 +159,9 @@ def benchmark_pq(model, dataset, batchsize, mode, pruner="-", quantizer="-", trt
 ITERATION OF PRUNING BENCHMARKS WITH CONFIG
 """
 def test_pruning():
+	"""
+	Iterates over all pruning experiment permutations in the config file and starts a benchmark run on each
+	"""
 	# Iterate over every permutation of configurations
 	for b, m, p, d, a in itertools.product(cfg.batchsizes, cfg.models_to_test, cfg.pruners_to_test + cfg.removal_pruners_to_test, cfg.datasets_to_test, cfg.degrees):
 		# Get models
@@ -144,6 +186,9 @@ def test_pruning():
 ITERATION OF QUANTIZATION BENCHMARKS WITH CONFIG
 """
 def test_quant():
+	"""
+	Iterates over all quantization experiment permutations in the config file and starts a benchmark run on each
+	"""
 	for b, m, q, d in itertools.product(cfg.batchsizes, cfg.models_to_test, cfg.quantizers_to_test, cfg.datasets_to_test):
 		model = cfg.modeldict[m]().model
 		dataset = cfg.datasetdict[d]()
@@ -157,6 +202,9 @@ def test_quant():
 ITERATION OF PRUNING + QUANTIZATION BENCHMARKS WITH CONFIG
 """
 def test_pruning_and_quant():
+	"""
+	Iterates over all pruning and quantization combination experiment permutations in the config file and starts a benchmark run on each
+	"""
 	for b, m, p, q, d, a in itertools.product(cfg.batchsizes, cfg.models_to_test, cfg.pruners_to_test + cfg.removal_pruners_to_test, cfg.quantizers_to_test, cfg.datasets_to_test, cfg.degrees):
 		model = cfg.modeldict[m]().model
 		dataset = cfg.datasetdict[d]()
@@ -172,12 +220,12 @@ def test_pruning_and_quant():
 			print("########## Couldn't compress % s" % (m))
 
 
-if __name__ == '__main__':
-	for _ in range(iterations):
-		# Read config file
-		cfg = ConfigReader()
-		# Create CSV file
-		create_experiment_csv(cfg.exp_path)
+if __name__ == "__main__":
+	# Read config file
+	cfg = ConfigReader()
+	# Create CSV file
+	create_experiment_csv(cfg.exp_path)
+	for _ in range(cfg.iterations):
 		# Prune if pruners specified
 		if len(cfg.pruners_to_test + cfg.removal_pruners_to_test) > 0: test_pruning()
 		# Quantize if quantizer specified

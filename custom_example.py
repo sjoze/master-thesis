@@ -22,7 +22,7 @@ class Imagenet1000(Dataset):
     def __init__(self):
         self.data_path = "data/imagenet_sample"
         self.image_paths = [join(self.data_path, f) for f in listdir(self.data_path,) if isfile(join(self.data_path, f))
-                            and f.endswith('.jpg')]
+                            and f.endswith(".jpg")]
         with open(join(self.data_path, "labels.json")) as json_file:
             json_data = json.load(json_file)
         self.labels = json_data["labels"]
@@ -43,7 +43,7 @@ class Imagenet1000(Dataset):
 
 
 # Define a pretrained model
-model = torch.hub.load('pytorch/vision:v0.10.0', 'alexnet', pretrained=True)
+model = torch.hub.load("pytorch/vision:v0.10.0", "alexnet", pretrained=True)
 
 
 # Define a class with a "prune" method and a "name" and "amount" attribute
@@ -58,7 +58,7 @@ class Random(Pruner):
 
         for module in modules:
             prune.random_unstructured(module, name="weight", amount=self.amount)
-            prune.remove(module, 'weight')
+            prune.remove(module, "weight")
             if self.verbosity > 0:
                 print("Pruned " + module.str())
 

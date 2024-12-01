@@ -23,7 +23,7 @@ class Model:
 class AlexNet(Model):
     def __init__(self):
         super().__init__()
-        self.model = torch.hub.load('pytorch/vision:v0.10.0', 'alexnet', pretrained=True)
+        self.model = torch.hub.load("pytorch/vision:v0.10.0", "alexnet", pretrained=True)
 
 
 
@@ -33,7 +33,7 @@ class DenseNet(Model):
         super().__init__()
         self.layers = layers
         try:
-            self.model = torch.hub.load('pytorch/vision:v0.10.0', 'densenet' + str(self.layers), pretrained=True)
+            self.model = torch.hub.load("pytorch/vision:v0.10.0", "densenet" + str(self.layers), pretrained=True)
         except:
             raise Exception(str(self.layers) +
                             " is not a supported amount of layers. DenseNet supports: 121, 161, 169, and 201.")
@@ -46,7 +46,7 @@ class DenseNet(Model):
 class GoogLeNet(Model):
     def __init__(self):
         super().__init__()
-        self.model = torch.hub.load('pytorch/vision:v0.10.0', 'googlenet', pretrained=True)
+        self.model = torch.hub.load("pytorch/vision:v0.10.0", "googlenet", pretrained=True)
 
 
 @register
@@ -55,7 +55,7 @@ class ResNet(Model):
         super().__init__()
         self.layers = layers
         try:
-            self.model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet'+str(self.layers), pretrained=True)
+            self.model = torch.hub.load("pytorch/vision:v0.10.0", "resnet"+str(self.layers), pretrained=True)
         except:
             raise Exception(str(self.layers) +
                             " is not a supported amount of layers. ResNet supports: 18, 34, 50, 101 and 152.")
@@ -68,21 +68,21 @@ class ResNet(Model):
 class InceptionV3(Model):
     def __init__(self):
         super().__init__()
-        self.model = torch.hub.load('pytorch/vision:v0.10.0', 'inception_v3', pretrained=True)
+        self.model = torch.hub.load("pytorch/vision:v0.10.0", "inception_v3", pretrained=True)
 
 
 @register
 class MobileNetV2(Model):
     def __init__(self):
         super().__init__()
-        self.model = torch.hub.load('pytorch/vision:v0.10.0', 'mobilenet_v2', pretrained=True)
+        self.model = torch.hub.load("pytorch/vision:v0.10.0", "mobilenet_v2", pretrained=True)
 
 
 @register
 class ShuffleNetV2(Model):
     def __init__(self):
         super().__init__()
-        self.model = torch.hub.load('pytorch/vision:v0.10.0', 'shufflenet_v2_x1_0', pretrained=True)
+        self.model = torch.hub.load("pytorch/vision:v0.10.0", "shufflenet_v2_x1_0", pretrained=True)
 
 
 @register

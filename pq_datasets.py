@@ -29,7 +29,7 @@ class Imagenet1000(Dataset):
     def __init__(self):
         self.data_path = "data/imagenet_sample"
         self.image_paths = [join(self.data_path, f) for f in listdir(self.data_path,) if isfile(join(self.data_path, f))
-                            and f.endswith('.jpg')]
+                            and f.endswith(".jpg")]
         with open(join(self.data_path, "labels.json")) as json_file:
             json_data = json.load(json_file)
         self.labels = json_data["labels"]
@@ -80,7 +80,7 @@ class ImageWoof(Dataset):
     def __getitem__(self, idx):
         image_filepath = self.image_paths[idx]
         image = Image.open(image_filepath)
-        image = imagenet_transform(image.convert('RGB'))        # Some images are greyscale
+        image = imagenet_transform(image.convert("RGB"))        # Some images are greyscale
         label = self.labels[idx]
 
         return image, label

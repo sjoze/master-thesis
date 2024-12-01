@@ -51,7 +51,7 @@ class Random(Pruner):
         for module in modules:
             prune.random_unstructured(module, name="weight", amount=self.amount)
             # Apply pruning mask
-            prune.remove(module, 'weight')
+            prune.remove(module, "weight")
             if self.verbosity > 0:
                 print("Pruned " + module.__str__())
 
@@ -61,7 +61,7 @@ class Random(Pruner):
 # Disconnect one neuron: 0 (or Neurons for Convs)
 @register
 class LnStructured(Pruner):
-    def __init__(self, amount, dim=1, n=float('-inf'), verbosity=0):
+    def __init__(self, amount, dim=1, n=float("-inf"), verbosity=0):
         super().__init__("Ln Structured", amount)
         self.dim = dim
         self.n = n
@@ -71,7 +71,7 @@ class LnStructured(Pruner):
         modules = [module for module in model.modules() if not isinstance(module, nn.Sequential) and hasattr(module, "weight")]
         for module in modules:
             prune.ln_structured(module, name="weight", amount=self.amount, dim=self.dim, n=self.n)
-            prune.remove(module, 'weight')
+            prune.remove(module, "weight")
             if self.verbosity > 0:
                 print("Pruned " + module.__str__())
 
@@ -86,7 +86,7 @@ class L1Unstructured(Pruner):
         modules = [module for module in model.modules() if not isinstance(module, nn.Sequential) and hasattr(module, "weight")]
         for module in modules:
             prune.l1_unstructured(module, name="weight", amount=self.amount)
-            prune.remove(module, 'weight')
+            prune.remove(module, "weight")
             if self.verbosity > 0:
                 print("Pruned " + module.__str__())
 
